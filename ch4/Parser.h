@@ -2,7 +2,12 @@
 #define KAL_PARSER_H
 
 #include "Token.h"
+#include "./KaleidoscopeJIT.h"
 
+extern std::unique_ptr<KaleidoscopeJIT> TheJIT;
+extern std::unique_ptr<llvm::Module> TheModule;
+extern void InitializeModuleAndPassManager();
+extern std::map<std::string, std::unique_ptr<PrototypeAST>> FunctionProtos;
 static std::unique_ptr<ExprAST> ParseExpression();
 
 static std::unique_ptr<ExprAST> ParseNumberExpr() {
@@ -146,6 +151,8 @@ static void HandleDefinition() {
             fprintf(stderr, "Parsed a function definition.\n");
             FnIR->print(llvm::errs());
             fprintf(stderr, "\n");
+            TheJIT->addModule(std::move(TheModule));
+            InitializeModuleAndPassManager();
         }
     } else {
         getNextToken();
@@ -158,6 +165,7 @@ static void HandleExtern() {
             fprintf(stderr, "Parsed an extern\n");
             FnIR->print(llvm::errs());
             fprintf(stderr, "\n");
+            FunctionProtos[ProtoAST->getName()] = std::move(ProtoAST);
         }
     } else {
         getNextToken();
@@ -166,10 +174,17 @@ static void HandleExtern() {
 
 static void HandleTopLevelExpression() {
     if(auto FnAST = ParseTopLevelExpr()) {
-        if(auto *FnIR = FnAST->codegen()) {
-            fprintf(stderr, "Parsed a top-level expr\n");
-            FnIR->print(llvm::errs());
-            fprintf(stderr, "\n");
+        if(FnAST->codegen()) {
+            auto H = TheJIT->addModule(std::move(TheModule));
+            InitializeModuleAndPassManager();
+
+            auto ExprSymbol = TheJIT->findSymbol("__anon_expr");
+            assert(ExprSymbol && "Function not found");
+
+            double (*FP)() = (double (*)())(intptr_t)cantFail(ExprSymbol.getAddress());
+            fprintf(stderr, "Evaluated to %f\n", FP());
+
+            TheJIT->removeModule(H);
         }
     } else {
         getNextToken();
@@ -198,5 +213,20 @@ static void MainLoop() {
     }
 }
 
+#ifdef LLVM_ON_WIN32
+#define DLLEXPORT __declspec(dllexport)
+#else
+#define DLLEXPORT
+#endif
+
+extern "C" DLLEXPORT double putchard(double X) {
+    fputc((char)X, stderr);
+    return 0;
+}
+
+extern "C" DLLEXPORT double printd(double X) {
+    fprintf(stderr, "%f\n", X);
+    return 0;
+}
 
 #endif

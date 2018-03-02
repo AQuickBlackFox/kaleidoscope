@@ -16,7 +16,30 @@
 std::string IdentifierStr;
 double NumVal;
 
+extern std::unique_ptr<KaleidoscopeJIT> TheJIT;
+
+void InitializeModuleAndPassManager() {
+    TheModule = llvm::make_unique<llvm::Module>("my cool jit", TheContext);
+    TheModule->setDataLayout(TheJIT->getTargetMachine().createDataLayout());
+
+    TheFPM = llvm::make_unique<llvm::legacy::FunctionPassManager>(TheModule.get());
+
+    TheFPM->add(llvm::createInstructionCombiningPass());
+
+    TheFPM->add(llvm::createReassociatePass());
+
+    TheFPM->add(llvm::createGVNPass());
+
+    TheFPM->add(llvm::createCFGSimplificationPass());
+
+    TheFPM->doInitialization();
+}
+
 int main() {
+    llvm::InitializeNativeTarget();
+    llvm::InitializeNativeTargetAsmPrinter();
+    llvm::InitializeNativeTargetAsmParser();
+
     BinopPrecedence['<'] = 10;
     BinopPrecedence['+'] = 20;
     BinopPrecedence['-'] = 30;
@@ -25,7 +48,9 @@ int main() {
     fprintf(stderr, "ready> ");
     getNextToken();
 
-    TheModule = llvm::make_unique<llvm::Module>("my cool jit", TheContext);
+    TheJIT = llvm::make_unique<KaleidoscopeJIT>();
+
+    InitializeModuleAndPassManager();
 
     MainLoop();
 

@@ -3,13 +3,28 @@
 
 #include "AST.h"
 
+using namespace llvm::orc;
+
 static llvm::LLVMContext TheContext;
 static llvm::IRBuilder<> Builder(TheContext);
-static std::unique_ptr<llvm::Module> TheModule;
+std::unique_ptr<llvm::Module> TheModule;
 static std::map<std::string, llvm::Value*> NamedValues;
+static std::unique_ptr<llvm::legacy::FunctionPassManager> TheFPM;
+std::unique_ptr<KaleidoscopeJIT> TheJIT;
+std::map<std::string, std::unique_ptr<PrototypeAST>> FunctionProtos;
 
 llvm::Value *LogErrorV(const char *Str) {
     LogError(Str);
+    return nullptr;
+}
+
+llvm::Function *getFunction(std::string Name) {
+    if(auto *F = TheModule->getFunction(Name)) return F;
+
+    auto FI = FunctionProtos.find(Name);
+    if(FI != FunctionProtos.end())
+        return FI->second->codegen();
+
     return nullptr;
 }
 
@@ -78,11 +93,11 @@ llvm::Function *PrototypeAST::codegen() {
 }
 
 llvm::Function *FunctionAST::codegen() {
-    llvm::Function *TheFunction = TheModule->getFunction(Proto->getName());
+    auto &P = *Proto;
 
-    if(!TheFunction) {
-        TheFunction = Proto->codegen();
-    }
+    FunctionProtos[Proto->getName()] = std::move(Proto);
+
+    llvm::Function *TheFunction = getFunction(Proto->getName());
 
     if(!TheFunction) return nullptr;
 
@@ -95,6 +110,7 @@ llvm::Function *FunctionAST::codegen() {
     if(llvm::Value *RetVal = Body->codegen()) {
         Builder.CreateRet(RetVal);
         verifyFunction(*TheFunction);
+        TheFPM->run(*TheFunction);
         return TheFunction;
     }
 
